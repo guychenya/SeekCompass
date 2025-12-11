@@ -1,20 +1,48 @@
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+<img width="1280" alt="SeekCompass App Preview" src="assets/app-screenshot.png" />
 </div>
 
-# Run and deploy your AI Studio app
+# SeekCompass - AI Tool Discovery Hub
 
-This contains everything you need to run your app locally.
+A modern, interactive platform to discover, explore, and compare the best AI tools for productivity, creativity, and business.
 
-View your app in AI Studio: https://ai.studio/apps/drive/1AgxZibAQG2Qsfg5_OJ5_AE7DsVdTX29u
+[![Netlify Status](https://api.netlify.com/api/v1/badges/618b2554-1915-443a-9e58-05290d2f9045/deploy-status)](https://app.netlify.com/sites/seekcompass-gemini-preview/deploys)
+**[🚀 Live Demo](https://seekcompass-gemini-preview.netlify.app)**
+
+## Features
+
+- **AI-Powered Discovery:** Chat with an integrated AI assistant to find the perfect tools.
+- **Smart Submission:** Use AI to auto-fill tool details from a simple text paste.
+- **Logo Generation:** Automatically generate professional logos for your tools using Gemini Image models.
+- **Responsive Design:** Beautiful, mobile-friendly UI built with Tailwind CSS.
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
+**Prerequisites:**  Node.js (v18+)
 
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+2. **Configure API Key (Optional but Recommended):**
+   - Create a `.env.local` file in the root directory.
+   - Add your Google Gemini API key:
+     ```env
+     GEMINI_API_KEY=your_key_here
+     ```
+   - *Note:* You can also skip this and enter your API key directly in the app's "Settings" menu (Bring Your Own Key).
+
+3. **Run the app:**
+   ```bash
+   npm run dev
+   ```
+
+## Deployment
+
+This project is configured for deployment on Netlify.
+
+```bash
+npm run build
+# The 'dist' folder is ready for deployment
+```

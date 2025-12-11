@@ -5,6 +5,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { CATEGORIES } from '../constants';
 import { PricingModel, Tool } from '../types';
 import { saveToolLocally } from '../services/toolService';
+import { getGoogleAiKey } from '../utils/aiConfig';
 
 const SubmitToolPage: React.FC = () => {
   const [submitted, setSubmitted] = useState(false);
@@ -104,7 +105,11 @@ Please review and add to the directory.
     setGenError(null);
 
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const apiKey = getGoogleAiKey();
+        if (!apiKey) {
+            throw new Error("No API Key found. Please configure it in the Chat Settings.");
+        }
+        const ai = new GoogleGenAI({ apiKey });
         const categoriesList = CATEGORIES.map(c => `'${c.id}' (${c.name})`).join(', ');
         const pricingList = Object.values(PricingModel).join(', ');
 
@@ -178,7 +183,7 @@ Please review and add to the directory.
         }
     } catch (e: any) {
         console.error("Smart Fill Failed", e);
-        setGenError("Failed to parse text info. Please check the content and try again.");
+        setGenError(e.message || "Failed to parse text info. Please check the content and try again.");
     } finally {
         setIsParsing(false);
     }
@@ -194,7 +199,11 @@ Please review and add to the directory.
     setGenError(null);
 
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const apiKey = getGoogleAiKey();
+        if (!apiKey) {
+            throw new Error("No API Key found. Please configure it in the Chat Settings.");
+        }
+        const ai = new GoogleGenAI({ apiKey });
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: {

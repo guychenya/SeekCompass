@@ -1,0 +1,9 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Fallback for Single Page Applications (useful if you switch to BrowserRouter later)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

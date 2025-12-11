@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import { X, Send, Bot, PanelRightClose, Trash2, Sparkles, User, BarChart2, Table as TableIcon, ExternalLink, Settings, Save, Key, Eye, EyeOff, AlertCircle, ChevronDown, Maximize, Minimize, Image as ImageIcon, Download, Copy, ThumbsUp, ThumbsDown, Check } from 'lucide-react';
 import { MOCK_TOOLS } from '../constants';
+import { getGoogleAiKey, STORAGE_KEY_MODEL_CONFIG } from '../utils/aiConfig';
 
 // --- NEW INTERFACES FOR MULTIMODAL CONTENT ---
 interface MessagePart {
@@ -333,7 +334,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
   const [dislikedMessages, setDislikedMessages] = useState<Set<string>>(new Set());
   
   useEffect(() => {
-    const saved = localStorage.getItem('ai_hub_model_config');
+    const saved = localStorage.getItem(STORAGE_KEY_MODEL_CONFIG);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -344,7 +345,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
 
   const saveConfig = (newConfig: ModelConfig) => {
     setModelConfig(newConfig);
-    localStorage.setItem('ai_hub_model_config', JSON.stringify(newConfig));
+    localStorage.setItem(STORAGE_KEY_MODEL_CONFIG, JSON.stringify(newConfig));
   };
 
   useEffect(() => {
@@ -354,22 +355,26 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
   }, [messages, isOpen]);
 
   const startResizing = useCallback(() => { setIsResizing(true); }, []);
-  const stopResizing = useCallback(() => { setIsResizing(false); }, []);
-  const resize = useCallback((mouseMoveEvent: MouseEvent) => {
-    if (isResizing) {
-      const newWidth = window.innerWidth - mouseMoveEvent.clientX;
-      if (newWidth >= 300 && newWidth <= 800) { setSidebarWidth(newWidth); }
-    }
-  }, [isResizing]);
 
   useEffect(() => {
-    window.addEventListener("mousemove", resize);
-    window.addEventListener("mouseup", stopResizing);
-    return () => {
-      window.removeEventListener("mousemove", resize);
-      window.removeEventListener("mouseup", stopResizing);
+    if (!isResizing) return;
+
+    const handleResize = (e: MouseEvent) => {
+      const newWidth = window.innerWidth - e.clientX;
+      if (newWidth >= 300 && newWidth <= 800) { setSidebarWidth(newWidth); }
     };
-  }, [resize, stopResizing]);
+
+    const handleStopResizing = () => {
+      setIsResizing(false);
+    };
+
+    window.addEventListener("mousemove", handleResize);
+    window.addEventListener("mouseup", handleStopResizing);
+    return () => {
+      window.removeEventListener("mousemove", handleResize);
+      window.removeEventListener("mouseup", handleStopResizing);
+    };
+  }, [isResizing]);
 
   const handleSend = async (textOverride?: string) => {
     const textToSend = textOverride || input;
@@ -390,7 +395,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
     }
 
     try {
-      const apiKey = modelConfig.apiKeys.google || process.env.API_KEY;
+      const apiKey = modelConfig.apiKeys.google || getGoogleAiKey();
       const ai = new GoogleGenAI({ apiKey });
 
       const toolsContext = MOCK_TOOLS.map(t => 
