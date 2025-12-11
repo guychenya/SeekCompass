@@ -1,13 +1,12 @@
 <div align="center">
-<img width="1280" alt="SeekCompass App Preview" src="assets/app-screenshot.png" />
-</div>
+<img width="1280" alt="SeekCompass App Preview" src="assets/app-preview.png" />
 
 # SeekCompass - AI Tool Discovery Hub
 
 A modern, interactive platform to discover, explore, and compare the best AI tools for productivity, creativity, and business.
 
-[![Netlify Status](https://api.netlify.com/api/v1/badges/618b2554-1915-443a-9e58-05290d2f9045/deploy-status)](https://app.netlify.com/sites/seekcompass-gemini-preview/deploys)
-**[🚀 Live Demo](https://seekcompass-gemini-preview.netlify.app)**
+**[🚀 Live Demo](https://seekcompass.netlify.app)**
+</div>
 
 ## Features
 
