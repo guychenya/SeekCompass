@@ -204,42 +204,59 @@ Please review and add to the directory.
         if (!apiKey) {
             throw new Error("No API Key found. Please configure it in the Chat Settings.");
         }
+
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-image' }); // Using the image model from the list
 
         const promptContent = `Design a high-quality, modern, minimalist, vector-style app icon/logo for an AI tool named "${formData.name}". 
                     Tool Description: "${formData.description}". 
                     Style: Flat design, solid colors, professional, white background. 
                     Ensure the design is centered and looks like a startup logo.`;
 
-        const result = await model.generateContent(promptContent);
-        const response = result.response;
+        const generateImageWithModel = async (modelId: string, isFallback = false): Promise<string | null> => {
+            try {
+                const model = genAI.getGenerativeModel({ model: modelId });
+                const result = await model.generateContent(promptContent);
+                const response = result.response;
 
-        let foundImage = false;
-        if (response.candidates?.[0]?.content?.parts) {
-            for (const part of response.candidates[0].content.parts) {
-                if (part.inlineData) {
-                    setGeneratedLogo(`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`);
-                    setFormData(prev => ({ ...prev, logoUrl: '' })); // Clear manual URL if user had one
-                    foundImage = true;
-                    break;
+                if (response.candidates?.[0]?.content?.parts) {
+                    for (const part of response.candidates[0].content.parts) {
+                        if (part.inlineData) {
+                            return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                        }
+                    }
                 }
+                return null;
+            } catch (error: any) {
+                console.error(`Logo generation failed with model ${modelId}:`, error);
+                if (isFallback) throw error; // If it's a fallback, and it fails, rethrow.
+                
+                // For primary model failure, try fallback model
+                const errorMessage = error.message || '';
+                if (errorMessage.includes('404') || errorMessage.includes('not found')) {
+                    console.warn(`[SeekCompass] Image model ${modelId} not found or supported. Trying 'gemini-2.5-flash-exp-image-generation'.`);
+                    return await generateImageWithModel('gemini-2.5-flash-exp-image-generation', true);
+                }
+                throw error; // Re-throw other errors
             }
-        }
-        
-        if (!foundImage) {
+        };
+
+        const generatedData = await generateImageWithModel('gemini-2.5-flash-image');
+
+        if (generatedData) {
+            setGeneratedLogo(generatedData);
+            setFormData(prev => ({ ...prev, logoUrl: '' })); // Clear manual URL if user had one
+        } else {
             setGenError("The model didn't return an image. This might happen if the prompt is too complex or the model is overloaded. Please try again with a simpler description or at a later time.");
         }
 
     } catch (e: any) {
-        console.error("Logo generation failed", e);
-        // More descriptive error for 404/API key issues
+        console.error("Logo generation failed (final catch):", e);
         if (e.message?.includes('404') || e.message?.includes('not found')) {
-             setGenError(`Image generation model ('gemini-2.5-flash-image') not found for your API key. Please ensure your key supports image generation models.`);
+             setGenError(`Image generation models not found for your API key. Please ensure your key supports image generation models like 'gemini-2.5-flash-image' or 'gemini-2.5-flash-exp-image-generation'.`);
         } else if (e.message?.includes('403') || e.message?.includes('401')) {
-            setGenError("Authentication Error: Please check your Google API Key in Chat Settings. It might not have permissions for image generation.");
+            setGenError("Authentication Error: Please check your Google API Key in Chat Settings. It might not have permissions for image generation. Ensure the Generative Language API is enabled for your project.");
         } else {
-            setGenError("Failed to generate logo. Ensure API Key is valid and try again.");
+            setGenError(`Failed to generate logo: ${e.message || 'Unknown error'}. Ensure API Key is valid and try again.`);
         }
     } finally {
         setIsGeneratingLogo(false);
