@@ -191,12 +191,6 @@ Please review and add to the directory.
   };
 
   const handleGenerateLogo = async () => {
-    // Feature currently disabled due to library change and model limitations
-    setGenError("Image generation is not supported by the current Google Gemini text models (e.g., Gemini 1.5 Flash). Please provide a logo URL manually.");
-    return;
-    
-    /* 
-    // Legacy Implementation - Requires update for Imagen/Vertex
     if (!formData.name || !formData.description) {
         setGenError("Please enter a Tool Name and Description first.");
         return;
@@ -211,15 +205,45 @@ Please review and add to the directory.
             throw new Error("No API Key found. Please configure it in the Chat Settings.");
         }
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        // ... (Image generation logic requires different API/Model)
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-image' }); // Using the image model from the list
+
+        const promptContent = `Design a high-quality, modern, minimalist, vector-style app icon/logo for an AI tool named "${formData.name}". 
+                    Tool Description: "${formData.description}". 
+                    Style: Flat design, solid colors, professional, white background. 
+                    Ensure the design is centered and looks like a startup logo.`;
+
+        const result = await model.generateContent(promptContent);
+        const response = result.response;
+
+        let foundImage = false;
+        if (response.candidates?.[0]?.content?.parts) {
+            for (const part of response.candidates[0].content.parts) {
+                if (part.inlineData) {
+                    setGeneratedLogo(`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`);
+                    setFormData(prev => ({ ...prev, logoUrl: '' })); // Clear manual URL if user had one
+                    foundImage = true;
+                    break;
+                }
+            }
+        }
+        
+        if (!foundImage) {
+            setGenError("The model didn't return an image. This might happen if the prompt is too complex or the model is overloaded. Please try again with a simpler description or at a later time.");
+        }
+
     } catch (e: any) {
         console.error("Logo generation failed", e);
-        setGenError("Failed to generate logo. Ensure API Key is valid.");
+        // More descriptive error for 404/API key issues
+        if (e.message?.includes('404') || e.message?.includes('not found')) {
+             setGenError(`Image generation model ('gemini-2.5-flash-image') not found for your API key. Please ensure your key supports image generation models.`);
+        } else if (e.message?.includes('403') || e.message?.includes('401')) {
+            setGenError("Authentication Error: Please check your Google API Key in Chat Settings. It might not have permissions for image generation.");
+        } else {
+            setGenError("Failed to generate logo. Ensure API Key is valid and try again.");
+        }
     } finally {
         setIsGeneratingLogo(false);
     }
-    */
   };
 
   const handleRemoveGenerated = () => {
