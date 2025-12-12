@@ -556,7 +556,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
             const genAI = new GoogleGenerativeAI(apiKey);
             
             // Helper for handling fallbacks
-            const generateContent = async (modelId: string, isRetry = false): Promise<string> => {
+            const generateContent = async (modelId: string, retryCount = 0): Promise<string> => {
                 try {
                     const model = genAI.getGenerativeModel({ 
                         model: modelId,
@@ -576,13 +576,23 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
                     });
                     return result.response.text();
                 } catch (error: any) {
-                    // Check for Quota Exceeded (429) or Service Unavailable (503)
-                    const isQuotaError = error.message?.includes('429') || error.message?.includes('Quota') || error.message?.includes('503');
-                    const isExperimental = modelId.includes('exp') || modelId.includes('2.0');
+                    const msg = error.message || '';
+                    const isQuotaError = msg.includes('429') || msg.includes('Quota') || msg.includes('503');
+                    const isNotFoundError = msg.includes('404') || msg.includes('not found');
                     
-                    if (isQuotaError && isExperimental && !isRetry) {
-                         console.warn(`[SeekCompass] Quota exceeded on ${modelId}. Auto-falling back to gemini-1.5-flash.`);
-                         return await generateContent('gemini-1.5-flash', true);
+                    // Retry Logic (Max 2 retries to prevent infinite loops)
+                    if (retryCount < 2) {
+                        // 1. Quota Error or Not Found on Experimental/Other -> Try Flash
+                        if ((isQuotaError || isNotFoundError) && modelId !== 'gemini-1.5-flash') {
+                            console.warn(`[SeekCompass] Issue with ${modelId} (${isQuotaError ? 'Quota' : 'Not Found'}). Falling back to gemini-1.5-flash.`);
+                            return await generateContent('gemini-1.5-flash', retryCount + 1);
+                        }
+                        
+                        // 2. Not Found on Flash -> Try Legacy gemini-pro
+                        if (isNotFoundError && modelId === 'gemini-1.5-flash') {
+                             console.warn(`[SeekCompass] gemini-1.5-flash not found. Falling back to gemini-pro.`);
+                             return await generateContent('gemini-pro', retryCount + 1);
+                        }
                     }
                     throw error;
                 }
@@ -601,17 +611,30 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
     } catch (error: any) {
       console.error('Error generating response:', error);
       
-      // TODO: FUTURE IMPROVEMENT - Handle Quota Exceeded (429) Errors
-      // The current error shows: [429] Quota exceeded ... limit: 0, model: gemini-2.0-flash-exp
-      // Plan for next session:
-      // 1. Implement Auto-Fallback: If 429 received on 'gemini-2.0-flash-exp', automatically retry with 'gemini-1.5-flash'.
-      // 2. Implement Retry Logic: Use the 'retryDelay' from the error message (e.g., "Please retry in 49s") to show a countdown or auto-retry.
-      // 3. User Feedback: Explicitly tell the user to switch models if the limit is 0 (unavailable).
-
       let errorMessage = `Oops! I ran into a hiccup: ${error.message || 'Unknown error'}. Can you try asking that again?`;
+      
       if (error.message?.includes('API key') || error.message?.includes('403') || error.message?.includes('401')) {
         errorMessage = `Authentication Error: Please check your ${modelConfig.provider.toUpperCase()} API Key in Settings.`;
+      } else if (error.message?.includes('404')) {
+         // Diagnosing 404: Try to list models to help the user
+         try {
+             const key = modelConfig.apiKeys.google || getGoogleAiKey();
+             if (key) {
+                const listResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+                if (listResp.ok) {
+                    const data = await listResp.json();
+                    const available = data.models
+                       ?.filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+                       .map((m: any) => m.name.replace('models/', ''))
+                       .join(', ');
+                    if (available) {
+                        errorMessage += `\n\n**Diagnostic Info:** It seems the requested model isn't available for your API key. Your key supports the following models: \n${available}. \n\nI tried falling back but none worked. Please select one of these in Settings.`;
+                    }
+                }
+             }
+         } catch (e) { /* ignore diagnostic error */ }
       }
+
       setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'model', parts: parseTextToBlocks(errorMessage) }]);
     } finally {
       setIsLoading(false);
