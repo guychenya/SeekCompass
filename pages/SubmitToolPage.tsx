@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, UploadCloud, CheckCircle, Info, Sparkles, X, Loader2, Mail, ExternalLink, Wand2 } from 'lucide-react';
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { CATEGORIES } from '../constants';
 import { PricingModel, Tool } from '../types';
 import { saveToolLocally } from '../services/toolService';
@@ -109,7 +109,7 @@ Please review and add to the directory.
         if (!apiKey) {
             throw new Error("No API Key found. Please configure it in the Chat Settings.");
         }
-        const ai = new GoogleGenAI({ apiKey });
+        const genAI = new GoogleGenerativeAI(apiKey);
         const categoriesList = CATEGORIES.map(c => `'${c.id}' (${c.name})`).join(', ');
         const pricingList = Object.values(PricingModel).join(', ');
 
@@ -144,27 +144,28 @@ Please review and add to the directory.
         `;
         
         const responseSchema = {
-            type: Type.OBJECT,
+            type: SchemaType.OBJECT,
             properties: {
-                name: { type: Type.STRING },
-                url: { type: Type.STRING },
-                description: { type: Type.STRING },
-                category: { type: Type.STRING },
-                pricing: { type: Type.STRING },
-                tags: { type: Type.STRING },
+                name: { type: SchemaType.STRING },
+                url: { type: SchemaType.STRING },
+                description: { type: SchemaType.STRING },
+                category: { type: SchemaType.STRING },
+                pricing: { type: SchemaType.STRING },
+                tags: { type: SchemaType.STRING },
             }
         };
 
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: { 
-                responseMimeType: 'application/json',
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-1.5-flash",
+            generationConfig: {
+                responseMimeType: "application/json",
                 responseSchema: responseSchema
             }
         });
 
-        const text = response.text;
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        
         if (text) {
             const data = JSON.parse(text);
 
@@ -190,6 +191,12 @@ Please review and add to the directory.
   };
 
   const handleGenerateLogo = async () => {
+    // Feature currently disabled due to library change and model limitations
+    setGenError("Image generation is not supported by the current Google Gemini text models (e.g., Gemini 1.5 Flash). Please provide a logo URL manually.");
+    return;
+    
+    /* 
+    // Legacy Implementation - Requires update for Imagen/Vertex
     if (!formData.name || !formData.description) {
         setGenError("Please enter a Tool Name and Description first.");
         return;
@@ -203,42 +210,16 @@ Please review and add to the directory.
         if (!apiKey) {
             throw new Error("No API Key found. Please configure it in the Chat Settings.");
         }
-        const ai = new GoogleGenAI({ apiKey });
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: {
-                parts: [{ 
-                    text: `Design a high-quality, modern, minimalist, vector-style app icon/logo for an AI tool named "${formData.name}". 
-                    Tool Description: "${formData.description}". 
-                    Style: Flat design, solid colors, professional, white background. 
-                    Ensure the design is centered and looks like a startup logo.` 
-                }]
-            }
-        });
-
-        const candidate = response.candidates?.[0];
-        let foundImage = false;
-        if (candidate?.content?.parts) {
-            for (const part of candidate.content.parts) {
-                if (part.inlineData) {
-                    setGeneratedLogo(`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`);
-                    setFormData(prev => ({ ...prev, logoUrl: '' })); // Clear manual URL if user had one
-                    foundImage = true;
-                    break;
-                }
-            }
-        }
-        
-        if (!foundImage) {
-            setGenError("The model didn't return an image. Please try again.");
-        }
-
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        // ... (Image generation logic requires different API/Model)
     } catch (e: any) {
         console.error("Logo generation failed", e);
         setGenError("Failed to generate logo. Ensure API Key is valid.");
     } finally {
         setIsGeneratingLogo(false);
     }
+    */
   };
 
   const handleRemoveGenerated = () => {
