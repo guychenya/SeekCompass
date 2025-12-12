@@ -28,6 +28,7 @@ const SubmitToolPage: React.FC = () => {
   const [isGeneratingLogo, setIsGeneratingLogo] = useState(false);
   const [generatedLogo, setGeneratedLogo] = useState<string | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
+  const [retryAfterSeconds, setRetryAfterSeconds] = useState<number>(0);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -198,6 +199,7 @@ Please review and add to the directory.
 
     setIsGeneratingLogo(true);
     setGenError(null);
+    setRetryAfterSeconds(0); // Reset retry countdown
 
     try {
         const apiKey = getGoogleAiKey();
@@ -251,13 +253,32 @@ Please review and add to the directory.
 
     } catch (e: any) {
         console.error("Logo generation failed (final catch):", e);
-        if (e.message?.includes('404') || e.message?.includes('not found')) {
-             setGenError(`Image generation models not found for your API key. Please ensure your key supports image generation models like 'gemini-2.5-flash-image' or 'gemini-2.5-flash-exp-image-generation'.`);
-        } else if (e.message?.includes('403') || e.message?.includes('401')) {
-            setGenError("Authentication Error: Please check your Google API Key in Chat Settings. It might not have permissions for image generation. Ensure the Generative Language API is enabled for your project.");
-        } else {
-            setGenError(`Failed to generate logo: ${e.message || 'Unknown error'}. Ensure API Key is valid and try again.`);
-        }
+        const errorMessage = e.message || '';
+        let displayMessage = `Failed to generate logo: ${errorMessage}. Ensure API Key is valid and try again.`;
+
+        if (errorMessage.includes('429 Quota exceeded')) {
+            const retryInfo = e.response?.error?.details?.find((d: any) => d['@type'] && d['@type'].includes('RetryInfo'));
+            const delaySeconds = retryInfo && retryInfo.retryDelay ? parseInt(retryInfo.retryDelay.replace('s', '')) : 0;
+            
+            if (!isNaN(delaySeconds) && delaySeconds > 0) {
+                setRetryAfterSeconds(delaySeconds);
+                let countdown = delaySeconds;
+                const timer = setInterval(() => {
+                    countdown--;
+                    setRetryAfterSeconds(countdown);
+                    if (countdown <= 0) {
+                        clearInterval(timer);
+                    }
+                }, 1000);
+            }
+            displayMessage = `Quota Exceeded: Your API key has exceeded its limit for image generation. Please check your Google Cloud project's billing and quota settings.`;
+            displayMessage += ` For more information: [Rate Limits](https://ai.google.dev/gemini-api/docs/rate-limits) | [Usage Monitor](https://ai.dev/usage?tab=rate-limit)`;
+        } else if (errorMessage.includes('404') || errorMessage.includes('not found')) {
+             displayMessage = `Image generation models not found for your API key. Please ensure your key supports image generation models like 'gemini-2.5-flash-image' or 'gemini-2.5-flash-exp-image-generation'.`;
+        } else if (errorMessage.includes('403') || errorMessage.includes('401')) {
+            displayMessage = "Authentication Error: Please check your Google API Key in Chat Settings. It might not have permissions for image generation. Ensure the Generative Language API is enabled for your project.";
+        } 
+        setGenError(displayMessage);
     } finally {
         setIsGeneratingLogo(false);
     }
@@ -437,17 +458,17 @@ Please review and add to the directory.
                             placeholder="https://.../logo.png"
                             value={formData.logoUrl}
                             onChange={handleChange}
-                            disabled={isGeneratingLogo}
+                            disabled={isGeneratingLogo || retryAfterSeconds > 0}
                         />
                         <button
                             type="button"
                             onClick={handleGenerateLogo}
-                            disabled={isGeneratingLogo || (!formData.name && !formData.description)}
+                            disabled={isGeneratingLogo || retryAfterSeconds > 0 || (!formData.name && !formData.description)}
                             className="flex items-center justify-center px-4 py-2 bg-gradient-to-r from-brand-600 to-indigo-600 text-white rounded-lg font-bold text-sm hover:shadow-lg hover:shadow-brand-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95 whitespace-nowrap"
-                            title={(!formData.name || !formData.description) ? "Enter Name and Description first" : "Generate Logo"}
+                            title={retryAfterSeconds > 0 ? `Retry after ${retryAfterSeconds}s` : ((!formData.name || !formData.description) ? "Enter Name and Description first" : "Generate Logo")}
                         >
                             {isGeneratingLogo ? <Loader2 size={16} className="animate-spin mr-2"/> : <Sparkles size={16} className="mr-2" />}
-                            {isGeneratingLogo ? 'Designing...' : 'Generate with AI'}
+                            {isGeneratingLogo ? 'Designing...' : (retryAfterSeconds > 0 ? `Retry in ${retryAfterSeconds}s` : 'Generate with AI')}
                         </button>
                     </div>
                 ) : (
