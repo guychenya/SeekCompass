@@ -1,12 +1,16 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
-import { X, Send, Bot, PanelRightClose, Trash2, Sparkles, User, BarChart2, Table as TableIcon, ExternalLink, Settings, Save, Key, Eye, EyeOff, AlertCircle, ChevronDown, Maximize, Minimize, Image as ImageIcon, Download, Copy, ThumbsUp, ThumbsDown, Check } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from 'openai';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
+import mermaid from 'mermaid';
+import { X, Send, Bot, PanelRightClose, Trash2, Sparkles, User, BarChart2, Table as TableIcon, ExternalLink, Settings, Save, Key, Eye, EyeOff, AlertCircle, ChevronDown, Maximize, Minimize, Image as ImageIcon, Download, Copy, ThumbsUp, ThumbsDown, Check, FileText, Zap } from 'lucide-react';
 import { MOCK_TOOLS } from '../constants';
-import { getGoogleAiKey, STORAGE_KEY_MODEL_CONFIG } from '../utils/aiConfig';
+import { getGoogleAiKey, STORAGE_KEY_MODEL_CONFIG, STORAGE_KEY_CHAT_HISTORY } from '../utils/aiConfig';
 
 // --- NEW INTERFACES FOR MULTIMODAL CONTENT ---
 interface MessagePart {
-  type: 'text' | 'image' | 'chart' | 'table';
+  type: 'text' | 'image' | 'chart' | 'table' | 'mermaid';
   content: any;
 }
 
@@ -40,7 +44,7 @@ interface ModelConfig {
 
 const DEFAULT_CONFIG: ModelConfig = {
   provider: 'google',
-  modelId: 'gemini-2.5-flash-image', // Updated default model
+  modelId: 'gemini-1.5-flash',
   apiKeys: {
     google: '',
     openai: '',
@@ -50,9 +54,10 @@ const DEFAULT_CONFIG: ModelConfig = {
 
 const AVAILABLE_MODELS = {
   google: [
-    { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Flash (Image)' },
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Text)' },
-    { id: 'gemini-2.0-pro-exp-02-05', name: 'Gemini 2.0 Pro' },
+    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' },
+    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+    { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Preview)' },
+    { id: 'gemini-pro', name: 'Gemini 1.0 Pro (Legacy)' },
   ],
   openai: [
     { id: 'gpt-4o', name: 'GPT-4o' },
@@ -215,6 +220,39 @@ const RenderImage: React.FC<{ src: string }> = ({ src }) => {
   );
 };
 
+const RenderMermaid: React.FC<{ chart: string }> = ({ chart }) => {
+  const chartRef = useRef<HTMLDivElement>(null);
+  const chartId = useMemo(() => `mermaid-chart-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`, []);
+
+  useEffect(() => {
+    mermaid.initialize({ startOnLoad: false }); 
+
+    if (chartRef.current) {
+      try {
+        mermaid.render(chartId, chart)
+          .then(({ svg }) => {
+            if (chartRef.current) {
+              chartRef.current.innerHTML = svg;
+            }
+          })
+          .catch(error => {
+            console.error("Error rendering mermaid chart:", error);
+            if (chartRef.current) {
+              chartRef.current.innerHTML = `<pre class="text-rose-500">Error rendering chart:\n${chart}</pre>`;
+            }
+          });
+      } catch (error) {
+        console.error("Error rendering mermaid chart (sync):", error);
+        if (chartRef.current) {
+          chartRef.current.innerHTML = `<pre class="text-rose-500">Error rendering chart:\n${chart}</pre>`;
+        }
+      }
+    }
+  }, [chart, chartId]);
+
+  return <div ref={chartRef} className="my-4 p-4 bg-white rounded-xl border border-slate-200 shadow-sm w-full text-center mermaid-chart" />;
+};
+
 
 const parseTextToBlocks = (text: string): MessagePart[] => {
   const blocks: MessagePart[] = [];
@@ -236,7 +274,10 @@ const parseTextToBlocks = (text: string): MessagePart[] => {
            } catch (e) {
              blocks.push({ type: 'text', content: 'Error parsing chart data.' });
            }
-        } else {
+        } else if (codeBlockType === 'mermaid') { 
+           blocks.push({ type: 'mermaid', content: currentBuffer.join('\n') });
+        }
+        else {
            blocks.push({ type: 'text', content: currentBuffer.join('\n') });
         }
         currentBuffer = [];
@@ -248,7 +289,7 @@ const parseTextToBlocks = (text: string): MessagePart[] => {
            currentBuffer = [];
         }
         const type = line.replace('```', '').trim();
-        codeBlockType = type === 'json' || type === 'chart' ? 'chart' : 'text'; 
+        codeBlockType = (type === 'json' || type === 'chart') ? 'chart' : (type === 'mermaid' ? 'mermaid' : 'text'); 
         inCodeBlock = true;
       }
       continue;
@@ -297,6 +338,8 @@ const ModelMessageRenderer: React.FC<{ parts: MessagePart[] }> = ({ parts }) => 
             return <RenderChart key={idx} data={part.content as ChartDataPoint[]} title="Data Visualization" />;
           case 'table':
             return <RenderTable key={idx} content={part.content as string} />;
+          case 'mermaid':
+            return <RenderMermaid key={idx} chart={part.content as string} />;
           case 'text':
             return <div key={idx} className="whitespace-pre-wrap"><RichText text={part.content as string} /></div>;
           default:
@@ -316,7 +359,19 @@ const SUGGESTIONS = [
 ];
 
 const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized, onToggleMaximize }) => {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_CHAT_HISTORY);
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_CHAT_HISTORY, JSON.stringify(messages));
+  }, [messages]);
+
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -338,6 +393,18 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+        
+        // Migration: Fix invalid/legacy model IDs
+        if (parsed.modelId === 'gemini-2.5-flash-image' || parsed.modelId === 'gemini-2.5-flash') {
+            parsed.modelId = 'gemini-1.5-flash';
+        }
+        
+        // Validation: Ensure model exists in provider list
+        const validModels = AVAILABLE_MODELS[parsed.provider as keyof typeof AVAILABLE_MODELS]?.map(m => m.id) || [];
+        if (!validModels.includes(parsed.modelId)) {
+            parsed.modelId = AVAILABLE_MODELS[parsed.provider as keyof typeof AVAILABLE_MODELS]?.[0].id || DEFAULT_CONFIG.modelId;
+        }
+
         setModelConfig({ ...DEFAULT_CONFIG, ...parsed });
       } catch (e) { console.error('Failed to parse config', e); }
     }
@@ -376,6 +443,64 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
     };
   }, [isResizing]);
 
+  const [testStatus, setTestStatus] = useState<{[key: string]: 'idle' | 'testing' | 'success' | 'error'}>({});
+  const [testMessage, setTestMessage] = useState<string>('');
+
+  const testApiKey = async (provider: string) => {
+    setTestStatus(prev => ({...prev, [provider]: 'testing'}));
+    setTestMessage('');
+    const key = modelConfig.apiKeys[provider as keyof typeof modelConfig.apiKeys];
+    
+    if (!key) {
+        setTestStatus(prev => ({...prev, [provider]: 'error'}));
+        setTestMessage('No API Key entered.');
+        setTimeout(() => setTestStatus(prev => ({...prev, [provider]: 'idle'})), 3000);
+        return;
+    }
+
+    try {
+        if (provider === 'google') {
+            const genAI = new GoogleGenerativeAI(key);
+            // Try the selected model first, or default to 1.5-flash
+            const modelId = modelConfig.modelId || 'gemini-1.5-flash';
+            const model = genAI.getGenerativeModel({ model: modelId });
+            await model.generateContent("Test connection");
+        } else if (provider === 'openai') {
+            const openai = new OpenAI({ apiKey: key, dangerouslyAllowBrowser: true });
+            await openai.chat.completions.create({ messages: [{role: 'user', content: 'Test'}], model: 'gpt-4o' });
+        }
+        setTestStatus(prev => ({...prev, [provider]: 'success'}));
+        setTestMessage('Connection successful!');
+        setTimeout(() => setTestStatus(prev => ({...prev, [provider]: 'idle'})), 3000);
+    } catch (e: any) {
+        console.error(e);
+        setTestStatus(prev => ({...prev, [provider]: 'error'}));
+        
+        let msg = e.message || 'Validation failed';
+        
+        // Enhance Google Error Message with Model Listing if 404
+        if (provider === 'google' && (msg.includes('404') || msg.includes('not found'))) {
+             try {
+                 const listResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+                 if (listResp.ok) {
+                     const data = await listResp.json();
+                     const available = data.models
+                        ?.filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+                        .map((m: any) => m.name.replace('models/', ''))
+                        .join(', ');
+                     if (available) {
+                         msg = `Model not found. Your key supports: ${available}`;
+                     }
+                 }
+             } catch (listErr) {
+                 console.error("Failed to list models", listErr);
+             }
+        }
+        
+        setTestMessage(msg);
+    }
+  };
+
   const handleSend = async (textOverride?: string) => {
     const textToSend = textOverride || input;
     if (!textToSend.trim() || isLoading) return;
@@ -385,74 +510,107 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
     setInput('');
     setIsLoading(true);
 
-    if (modelConfig.provider !== 'google') {
-       setTimeout(() => {
-          const parts = parseTextToBlocks(`**${modelConfig.provider.toUpperCase()} Integration:**\n\nI am currently configured to use ${modelConfig.modelId}, but the backend integration for this provider is in "Preview Mode".\n\nPlease switch back to **Google Gemini** in settings to experience the full features (Charts, Tables, Image Generation).`);
-          setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'model', parts }]);
-          setIsLoading(false);
-       }, 1000);
-       return;
-    }
+    const toolsContext = MOCK_TOOLS.map(t => 
+      `- ${t.name} (Category: ${t.categories.join(', ')}, Price: ${t.pricing}, Popularity: ${t.popular ? 'High' : 'Average'}, URL: ${t.websiteUrl})`
+    ).join('\n');
+
+    const systemInstruction = `You are an advanced AI assistant for "SeekCompass". 
+    DATA CONTEXT:
+    ${toolsContext}
+    FORMATTING RULES (CANVAS MODE):
+    1. Text: Use **bold** for emphasis.
+    2. Tables: For comparisons, MUST use Markdown tables.
+    3. Links: When listing tools, ALWAYS include a clickable Markdown link: [Label](URL).
+    4. Charts: For popularity or numeric comparisons, MUST output a JSON block tagged 'chart'. Format: \`\`\`chart\n[{"label": "A", "value": 85}]\n\`\`\`
+    5. Images: If asked to "design", "draw", or "create an image/logo", you MUST generate and return an image.
+    6. Diagrams: If asked to create a diagram (flowchart, sequence, etc.), output a Mermaid code block tagged 'mermaid'. Format: \`\`\`mermaid\n...\n\`\`\`
+    BEHAVIOR:
+    - Always be helpful and concise.`;
 
     try {
-      const apiKey = modelConfig.apiKeys.google || getGoogleAiKey();
-      const ai = new GoogleGenAI({ apiKey });
+        let responseText = '';
 
-      const toolsContext = MOCK_TOOLS.map(t => 
-        `- ${t.name} (Category: ${t.categories.join(', ')}, Price: ${t.pricing}, Popularity: ${t.popular ? 'High' : 'Average'}, URL: ${t.websiteUrl})`
-      ).join('\n');
+        if (modelConfig.provider === 'openai') {
+            const apiKey = modelConfig.apiKeys.openai;
+            if (!apiKey) throw new Error("Missing OpenAI API Key");
+            
+            const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+            
+            const completion = await openai.chat.completions.create({
+                messages: [
+                    { role: "system", content: systemInstruction },
+                    ...messages.map(m => ({ 
+                        role: m.role === 'model' ? 'assistant' : 'user' as const, 
+                        content: m.parts.map(p => p.type === 'text' ? p.content : '').join('\n') 
+                    })),
+                    { role: "user", content: textToSend }
+                ],
+                model: modelConfig.modelId || 'gpt-4o',
+            });
+            responseText = completion.choices[0].message.content || "";
 
-      const systemInstruction = `You are an advanced AI assistant for "SeekCompass". 
-      DATA CONTEXT:
-      ${toolsContext}
-      FORMATTING RULES (CANVAS MODE):
-      1. Text: Use **bold** for emphasis.
-      2. Tables: For comparisons, MUST use Markdown tables.
-      3. Links: When listing tools, ALWAYS include a clickable Markdown link: [Label](URL).
-      4. Charts: For popularity or numeric comparisons, MUST output a JSON block tagged 'chart'. Format: \`\`\`chart\n[{"label": "A", "value": 85}]\n\`\`\`
-      5. Images: If asked to "design", "draw", or "create an image/logo", you MUST generate and return an image.
-      BEHAVIOR:
-      - Always be helpful and concise.`;
+        } else if (modelConfig.provider === 'google') {
+            const apiKey = modelConfig.apiKeys.google || getGoogleAiKey();
+            if (!apiKey) throw new Error("Missing Google API Key");
+            
+            const genAI = new GoogleGenerativeAI(apiKey);
+            
+            // Helper for handling fallbacks
+            const generateContent = async (modelId: string, isRetry = false): Promise<string> => {
+                try {
+                    const model = genAI.getGenerativeModel({ 
+                        model: modelId,
+                        systemInstruction
+                    });
+    
+                    const history = messages.map(msg => ({
+                        role: msg.role,
+                        parts: msg.parts.filter(p => p.type === 'text').map(p => ({ text: p.content as string }))
+                    })).filter(msg => msg.parts.length > 0);
+    
+                    const result = await model.generateContent({
+                        contents: [
+                            ...history,
+                            { role: 'user', parts: [{ text: textToSend }] }
+                        ],
+                    });
+                    return result.response.text();
+                } catch (error: any) {
+                    // Check for Quota Exceeded (429) or Service Unavailable (503)
+                    const isQuotaError = error.message?.includes('429') || error.message?.includes('Quota') || error.message?.includes('503');
+                    const isExperimental = modelId.includes('exp') || modelId.includes('2.0');
+                    
+                    if (isQuotaError && isExperimental && !isRetry) {
+                         console.warn(`[SeekCompass] Quota exceeded on ${modelId}. Auto-falling back to gemini-1.5-flash.`);
+                         return await generateContent('gemini-1.5-flash', true);
+                    }
+                    throw error;
+                }
+            };
 
-      const history = messages.map(msg => ({
-        role: msg.role,
-        parts: msg.parts.filter(p => p.type === 'text').map(p => ({ text: p.content as string }))
-      })).filter(msg => msg.parts.length > 0);
-
-      const response = await ai.models.generateContent({
-        model: modelConfig.modelId || 'gemini-2.5-flash-image',
-        contents: [
-          ...history,
-          { role: 'user', parts: [{ text: userMessage.parts[0].content }] }
-        ],
-        config: { systemInstruction, temperature: 0.3 }
-      });
-
-      const responseParts: MessagePart[] = [];
-      const candidate = response.candidates?.[0];
-      if (candidate?.content?.parts) {
-        for (const part of candidate.content.parts) {
-          if (part.inlineData && part.inlineData.mimeType.startsWith('image/')) {
-            responseParts.push({ type: 'image', content: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}` });
-          } else if (part.text) {
-            responseParts.push(...parseTextToBlocks(part.text));
-          }
+            responseText = await generateContent(modelConfig.modelId || 'gemini-1.5-flash');
+        } else {
+             throw new Error("Anthropic integration is coming soon.");
         }
-      }
-      
-      if (responseParts.length === 0 && response.text) {
-        responseParts.push(...parseTextToBlocks(response.text));
-      }
 
-      if (responseParts.length > 0) {
-        setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'model', parts: responseParts }]);
-      }
+        const responseParts: MessagePart[] = parseTextToBlocks(responseText);
+        if (responseParts.length > 0) {
+            setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'model', parts: responseParts }]);
+        }
 
     } catch (error: any) {
       console.error('Error generating response:', error);
-      let errorMessage = 'Oops! I ran into a hiccup. Can you try asking that again?';
-      if (error.message?.includes('API key')) {
-        errorMessage = 'Authentication Error: Please check your Google API Key in Settings.';
+      
+      // TODO: FUTURE IMPROVEMENT - Handle Quota Exceeded (429) Errors
+      // The current error shows: [429] Quota exceeded ... limit: 0, model: gemini-2.0-flash-exp
+      // Plan for next session:
+      // 1. Implement Auto-Fallback: If 429 received on 'gemini-2.0-flash-exp', automatically retry with 'gemini-1.5-flash'.
+      // 2. Implement Retry Logic: Use the 'retryDelay' from the error message (e.g., "Please retry in 49s") to show a countdown or auto-retry.
+      // 3. User Feedback: Explicitly tell the user to switch models if the limit is 0 (unavailable).
+
+      let errorMessage = `Oops! I ran into a hiccup: ${error.message || 'Unknown error'}. Can you try asking that again?`;
+      if (error.message?.includes('API key') || error.message?.includes('403') || error.message?.includes('401')) {
+        errorMessage = `Authentication Error: Please check your ${modelConfig.provider.toUpperCase()} API Key in Settings.`;
       }
       setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'model', parts: parseTextToBlocks(errorMessage) }]);
     } finally {
@@ -463,7 +621,10 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
-  const clearChat = () => { setMessages([]); };
+  const clearChat = () => { 
+      setMessages([]);
+      localStorage.removeItem(STORAGE_KEY_CHAT_HISTORY); 
+  };
   const toggleKeyVisibility = (provider: string) => { setShowKey(prev => ({ ...prev, [provider]: !prev[provider] })); };
 
   // Action Handlers
@@ -475,6 +636,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
             if (p.type === 'text') return p.content;
             if (p.type === 'table') return p.content;
             if (p.type === 'chart') return JSON.stringify(p.content, null, 2);
+            if (p.type === 'mermaid') return `\`\`\`mermaid\n${p.content}\n\`\`\``;
             return '[Image]';
         })
         .join('\n\n');
@@ -501,6 +663,47 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
       if (next.has(id)) { next.delete(id); } else { next.add(id); setLikedMessages(l => { l.delete(id); return new Set(l); }); }
       return next;
     });
+  };
+
+  const handleExportPdf = async () => {
+    const chatContainer = document.getElementById('chat-export-container');
+    if (!chatContainer) return;
+
+    try {
+      const canvas = await html2canvas(chatContainer, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        height: chatContainer.scrollHeight,
+        windowHeight: chatContainer.scrollHeight
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+      const ratio = pdfWidth / imgWidth;
+      const scaledHeight = imgHeight * ratio;
+
+      let heightLeft = scaledHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, scaledHeight);
+      heightLeft -= pdfHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - scaledHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, scaledHeight);
+        heightLeft -= pdfHeight;
+      }
+
+      pdf.save(`seekcompass-chat-${Date.now()}.pdf`);
+    } catch (err) {
+      console.error('Export PDF failed', err);
+    }
   };
 
   return (
@@ -546,9 +749,14 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
         </div>
         <div className="flex items-center space-x-1">
            {!isSettingsOpen && (
-             <button onClick={clearChat} className="p-2 text-slate-400 hover:text-rose-500 rounded-lg transition-colors hover:bg-rose-50" title="Clear Conversation">
-              <Trash2 size={16} />
-            </button>
+             <>
+               <button onClick={handleExportPdf} className="p-2 text-slate-400 hover:text-brand-600 rounded-lg transition-colors hover:bg-brand-50" title="Export to PDF">
+                 <FileText size={16} />
+               </button>
+               <button onClick={clearChat} className="p-2 text-slate-400 hover:text-rose-500 rounded-lg transition-colors hover:bg-rose-50" title="Clear Conversation">
+                <Trash2 size={16} />
+              </button>
+             </>
            )}
            <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className={`p-2 rounded-lg transition-colors ${isSettingsOpen ? 'bg-brand-100 text-brand-600' : 'text-slate-400 hover:text-brand-600 hover:bg-slate-100'}`} title="Settings & Keys">
              <Settings size={18} />
@@ -597,17 +805,51 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
                  </div>
                  <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Key size={14} className="text-slate-400" /></div>
-                    <input type={showKey['google'] ? "text" : "password"} value={modelConfig.apiKeys.google} onChange={(e) => saveConfig({ ...modelConfig, apiKeys: { ...modelConfig.apiKeys, google: e.target.value } })} placeholder={process.env.API_KEY ? "Using Default (Override here)" : "Enter AI Studio Key"} className="pl-9 pr-10 w-full p-2.5 text-sm bg-white border border-slate-200 rounded-xl focus:ring-brand-500 focus:border-brand-500" />
-                    <button onClick={() => toggleKeyVisibility('google')} className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600">{showKey['google'] ? <EyeOff size={14} /> : <Eye size={14} />}</button>
+                    <input 
+                        type={showKey['google'] ? "text" : "password"} 
+                        value={modelConfig.apiKeys.google} 
+                        onChange={(e) => saveConfig({ ...modelConfig, apiKeys: { ...modelConfig.apiKeys, google: e.target.value } })} 
+                        placeholder={process.env.API_KEY ? "Using Default (Override here)" : "Enter AI Studio Key"} 
+                        className={`pl-9 pr-16 w-full p-2.5 text-sm bg-white border rounded-xl focus:ring-brand-500 focus:border-brand-500 ${testStatus['google'] === 'error' ? 'border-rose-300' : (testStatus['google'] === 'success' ? 'border-emerald-300' : 'border-slate-200')}`} 
+                    />
+                    <div className="absolute inset-y-0 right-0 pr-2 flex items-center gap-1">
+                        <button 
+                            onClick={() => testApiKey('google')} 
+                            className={`p-1.5 rounded-lg transition-colors ${testStatus['google'] === 'testing' ? 'animate-pulse text-brand-500' : (testStatus['google'] === 'success' ? 'text-emerald-500 bg-emerald-50' : (testStatus['google'] === 'error' ? 'text-rose-500 bg-rose-50' : 'text-slate-400 hover:text-brand-600 hover:bg-slate-100'))}`} 
+                            title="Test API Key"
+                            disabled={testStatus['google'] === 'testing'}
+                        >
+                            <Zap size={14} fill={testStatus['google'] === 'success' ? "currentColor" : "none"} />
+                        </button>
+                        <button onClick={() => toggleKeyVisibility('google')} className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100">{showKey['google'] ? <EyeOff size={14} /> : <Eye size={14} />}</button>
+                    </div>
                  </div>
+                 {testStatus['google'] === 'error' && <p className="text-[10px] text-rose-500 mt-1 pl-1 font-medium">{testMessage}</p>}
               </div>
                <div className="space-y-1">
                  <div className="flex justify-between items-center text-xs"><span className="font-semibold text-slate-700">OpenAI Key</span></div>
                  <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Key size={14} className="text-slate-400" /></div>
-                    <input type={showKey['openai'] ? "text" : "password"} value={modelConfig.apiKeys.openai} onChange={(e) => saveConfig({ ...modelConfig, apiKeys: { ...modelConfig.apiKeys, openai: e.target.value } })} placeholder="sk-..." className="pl-9 pr-10 w-full p-2.5 text-sm bg-white border border-slate-200 rounded-xl focus:ring-brand-500 focus:border-brand-500" />
-                    <button onClick={() => toggleKeyVisibility('openai')} className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600">{showKey['openai'] ? <EyeOff size={14} /> : <Eye size={14} />}</button>
+                    <input 
+                        type={showKey['openai'] ? "text" : "password"} 
+                        value={modelConfig.apiKeys.openai} 
+                        onChange={(e) => saveConfig({ ...modelConfig, apiKeys: { ...modelConfig.apiKeys, openai: e.target.value } })} 
+                        placeholder="sk-..." 
+                        className={`pl-9 pr-16 w-full p-2.5 text-sm bg-white border rounded-xl focus:ring-brand-500 focus:border-brand-500 ${testStatus['openai'] === 'error' ? 'border-rose-300' : (testStatus['openai'] === 'success' ? 'border-emerald-300' : 'border-slate-200')}`} 
+                    />
+                    <div className="absolute inset-y-0 right-0 pr-2 flex items-center gap-1">
+                        <button 
+                            onClick={() => testApiKey('openai')} 
+                            className={`p-1.5 rounded-lg transition-colors ${testStatus['openai'] === 'testing' ? 'animate-pulse text-brand-500' : (testStatus['openai'] === 'success' ? 'text-emerald-500 bg-emerald-50' : (testStatus['openai'] === 'error' ? 'text-rose-500 bg-rose-50' : 'text-slate-400 hover:text-brand-600 hover:bg-slate-100'))}`} 
+                            title="Test API Key"
+                            disabled={testStatus['openai'] === 'testing'}
+                        >
+                            <Zap size={14} fill={testStatus['openai'] === 'success' ? "currentColor" : "none"} />
+                        </button>
+                        <button onClick={() => toggleKeyVisibility('openai')} className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100">{showKey['openai'] ? <EyeOff size={14} /> : <Eye size={14} />}</button>
+                    </div>
                  </div>
+                 {testStatus['openai'] === 'error' && <p className="text-[10px] text-rose-500 mt-1 pl-1 font-medium">{testMessage}</p>}
               </div>
                <div className="space-y-1">
                  <div className="flex justify-between items-center text-xs"><span className="font-semibold text-slate-700">Anthropic Key</span></div>
@@ -622,13 +864,25 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onClose, isMaximized,
               <AlertCircle size={16} className="shrink-0 mt-0.5" />
               <p>API Keys are stored locally in your browser's LocalStorage. We never transmit them to our servers.</p>
             </div>
-            <button onClick={() => setIsSettingsOpen(false)} className="w-full flex items-center justify-center space-x-2 bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-xl font-bold transition-all shadow-lg shadow-slate-900/20 active:scale-95">
-              <Save size={16} /><span>Save & Return to Chat</span>
-            </button>
+            <div className="space-y-3">
+              <button onClick={() => setIsSettingsOpen(false)} className="w-full flex items-center justify-center space-x-2 bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-xl font-bold transition-all shadow-lg shadow-slate-900/20 active:scale-95">
+                <Save size={16} /><span>Save & Return to Chat</span>
+              </button>
+              <button 
+                onClick={() => {
+                  localStorage.removeItem(STORAGE_KEY_MODEL_CONFIG);
+                  setModelConfig(DEFAULT_CONFIG);
+                  setIsSettingsOpen(false);
+                }} 
+                className="w-full py-3 text-xs font-bold text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+              >
+                Reset to Defaults
+              </button>
+            </div>
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-slate-50/50 relative scrollbar-thin scrollbar-thumb-slate-200">
+        <div id="chat-export-container" className="flex-1 overflow-y-auto p-4 space-y-6 bg-slate-50/50 relative scrollbar-thin scrollbar-thumb-slate-200">
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-8 opacity-0 animate-in fade-in duration-700 fill-mode-forwards">
                <div className="relative">
