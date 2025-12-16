@@ -3,9 +3,10 @@
 
 # SeekCompass - AI Tool Discovery Hub
 
+[![Netlify Status](https://img.shields.io/netlify/618b2554-1915-443a-9e58-05290d2f9045?style=flat&color=blue)](https://app.netlify.com/projects/seekcompass)
 A modern, interactive platform to discover, explore, and compare the best AI tools for productivity, creativity, and business.
 
-**[🚀 Live Demo](https://seekcompass.netlify.app)**
+**[🚀 Live Demo](https://seekcompass.reliatrack.org)**
 </div>
 
 ## Features

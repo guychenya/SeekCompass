@@ -92,7 +92,7 @@ const HomePage: React.FC = () => {
 
   return (
     <div className="min-h-full bg-slate-50">
-      <div className={`transition-all duration-500 ease-in-out overflow-hidden ${isHeroOpen ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}`}>
+      <div className={`transition-all duration-500 ease-in-out ${isHeroOpen ? 'max-h-[1000px] opacity-100 overflow-visible' : 'max-h-0 opacity-0 overflow-hidden'}`}>
         <Hero 
           searchQuery={searchQuery} 
           setSearchQuery={setSearchQuery}

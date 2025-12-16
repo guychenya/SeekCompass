@@ -102,7 +102,7 @@ const ToolDetailPage: React.FC = () => {
 
               {/* Title & Main Actions */}
               <div className="flex-grow">
-                <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4">
+                <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
                   <div>
                     <h1 className="text-3xl md:text-4xl font-display font-bold text-slate-900 mb-2">
                       {tool.name}
@@ -121,7 +121,7 @@ const ToolDetailPage: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex gap-3">
+                  <div className="flex gap-3 flex-shrink-0">
                     <button 
                       onClick={handleShare}
                       className={`p-2.5 rounded-lg border transition-colors duration-200 ${isCopied ? 'bg-emerald-50 text-emerald-600 border-emerald-300' : 'border-slate-300 text-slate-600 hover:bg-slate-50 hover:text-brand-600'}`}

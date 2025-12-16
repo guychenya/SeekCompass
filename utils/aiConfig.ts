@@ -1,4 +1,5 @@
 export const STORAGE_KEY_MODEL_CONFIG = 'ai_hub_model_config';
+export const STORAGE_KEY_CHAT_HISTORY = 'seekcompass_chat_history';
 
 export const getGoogleAiKey = (): string => {
   // 1. Try Environment Variable (Vite replaced)
